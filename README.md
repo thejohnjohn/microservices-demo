@@ -138,6 +138,64 @@ Find **Protocol Buffers Descriptions** at the [`./protos` directory](/protos).
 
 - [Development](/docs/development-guide.md) to learn how to run and develop this app locally.
 
+## Consumer-Driven Contract Testing (Pact)
+
+This fork demonstrates a Consumer-Driven Contract Testing (CDC) lab over the Online Boutique
+microservices, using [Pact](https://pact.io) and the [protobuf plugin](https://github.com/pactflow/pact-protobuf-plugin).
+
+The current scope is the `checkoutservice → cartservice` integration (`CartService/GetCart`).
+
+### Flow
+
+1. **Consumer test** (`src/checkoutservice/checkout_cart_consumer_test.go`) — the real
+   `checkoutService` is exercised against a Pact mock gRPC server, generating the pact file
+   in `pacts/`.
+
+   ```sh
+   cd src/checkoutservice
+   go test -vet=off -tags consumer -run TestCheckoutGetCart -v
+   ```
+
+2. **Publish** the pact to the Pact Broker.
+3. **Provider verification** — the real `cartservice` (Docker) is verified against the contract
+   fetched from the broker; the result is published back.
+4. **can-i-deploy** — the deployment gate, checked before releasing `checkoutservice`.
+
+### Tooling
+
+- Pact Broker (Docker): `docker compose -f docker-compose.pact-broker.yml up -d` → http://localhost:9292
+- `pact` CLI (Rust): install via `curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh`
+- Protobuf plugin: managed by the `pact` CLI / plugin driver.
+
+### Scripts (`pact/`)
+
+| Script                  | Purpose                                                        |
+|-------------------------|----------------------------------------------------------------|
+| `publish.sh`            | Publish `pacts/` to the broker (version = `<sha>-<branch>`)     |
+| `verify-cartservice.sh` | Start `cartservice`+Redis, run provider verification, publish   |
+| `can-i-deploy.sh`       | Check `checkoutservice` can deploy to the `test` environment   |
+| `state-server.py`       | Provider state setup: seeds the cart via the real `AddItem` RPC |
+
+### End-to-end run
+
+```sh
+# 1. Broker
+docker compose -f docker-compose.pact-broker.yml up -d
+
+# 2. Consumer test + publish
+cd src/checkoutservice && go test -vet=off -tags consumer -run TestCheckoutGetCart
+cd ../.. && ./pact/publish.sh
+
+# 3. Provider verification
+./pact/verify-cartservice.sh
+
+# 4. Record cartservice deployment in test, then gate
+pact broker record-deployment --pacticipant cartservice \
+  --version $(git rev-parse --short HEAD)-$(git branch --show-current) \
+  --environment test
+./pact/can-i-deploy.sh   # exit 0 = deployable
+```
+
 ## Demos featuring Online Boutique
 
 - [Security hardening of the OnlineBoutique sample apps with the Docker Hardened Images (DHI)](https://medium.com/google-cloud/security-hardening-of-the-onlineboutique-sample-apps-with-docker-hardened-images-dhi-ca1fad348343)
