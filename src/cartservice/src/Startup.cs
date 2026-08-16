@@ -73,6 +73,7 @@ namespace cartservice
             {
                 endpoints.MapGrpcService<CartService>();
                 endpoints.MapGrpcService<cartservice.services.HealthCheckService>();
+                endpoints.MapPost("/pact-state", cartservice.services.PactState.Setup);
 
                 endpoints.MapGet("/", async context =>
                 {

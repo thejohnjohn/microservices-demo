@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pact-broker-db
+  namespace: pact-broker
+  labels:
+    app: pact-broker-db
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: pact-broker
+  labels:
+    app: pact-broker-db
+spec:
+  selector:
+    matchLabels:
+      app: pact-broker-db
+  template:
+    metadata:
+      labels:
+        app: pact-broker-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: pact_broker
+        - name: POSTGRES_PASSWORD
+          value: pact_broker
+        - name: POSTGRES_DB
+          value: pact_broker
+        volumeMounts:
+        - mountPath: /var/lib/postgresql/data
+          name: data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pact-broker-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: pact-broker
+  labels:
+    app: pact-broker-db
+spec:
+  type: ClusterIP
+  selector:
+    app: pact-broker-db
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432

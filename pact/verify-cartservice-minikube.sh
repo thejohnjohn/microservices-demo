@@ -9,32 +9,34 @@ BRANCH="${BRANCH:-$(git -C "$ROOT" branch --show-current)}"
 SHA="${SHA:-$(git -C "$ROOT" rev-parse --short HEAD)}"
 VERSION="${VERSION:-${SHA}-${BRANCH}}"
 
-echo "==> starting cartservice + redis"
-docker compose -f "$ROOT/docker-compose.cartservice.yml" up -d
-trap 'docker compose -f "$ROOT/docker-compose.cartservice.yml" down >/dev/null 2>&1' EXIT
+"$ROOT/pact/port-forward-broker.sh"
 
-echo "==> starting provider state server"
-python3 "$ROOT/pact/state-server.py" &
-STATE_PID=$!
-trap 'kill $STATE_PID 2>/dev/null; docker compose -f "$ROOT/docker-compose.cartservice.yml" down >/dev/null 2>&1' EXIT
-sleep 1
+echo "==> ensuring cartservice (minikube) on :7070 and pact-state on :8080"
+if ! /bin/sh -c 'echo > /dev/tcp/localhost/7070' 2>/dev/null; then
+  setsid nohup kubectl port-forward svc/cartservice 7070:7070 --address 127.0.0.1 > /tmp/pf-cartservice.log 2>&1 < /dev/null &
+  disown
+fi
+if ! /bin/sh -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null; then
+  setsid nohup kubectl port-forward svc/cartservice 8080:8080 --address 127.0.0.1 > /tmp/pf-pactstate.log 2>&1 < /dev/null &
+  disown
+fi
 
 echo "==> waiting for cartservice on :7070"
 for i in $(seq 1 30); do
-  if docker exec cartservice-verify /bin/sh -c 'echo > /dev/tcp/localhost/7070' 2>/dev/null; then
+  if /bin/sh -c 'echo > /dev/tcp/localhost/7070' 2>/dev/null; then
     break
   fi
   sleep 1
 done
 
-echo "==> verifying against broker"
+echo "==> verifying against broker (provider state via cartservice /pact-state)"
 pact verifier \
   --broker-url "$PACT_BROKER_BASE_URL" \
   --provider-name cartservice \
   --transport grpc \
   --hostname localhost \
   --port 7070 \
-  --state-change-url http://localhost:8090 \
+  --state-change-url http://localhost:8080/pact-state \
   --publish \
   --provider-version "$VERSION" \
   --provider-tags "$BRANCH" \

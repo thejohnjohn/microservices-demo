@@ -9,6 +9,8 @@ BRANCH="${BRANCH:-$(git -C "$ROOT" branch --show-current)}"
 SHA="${SHA:-$(git -C "$ROOT" rev-parse --short HEAD)}"
 VERSION="${VERSION:-${SHA}-${BRANCH}}"
 
+"$ROOT/pact/port-forward-broker.sh"
+
 echo "publishing $ROOT/pacts -> $PACT_BROKER_BASE_URL (version=$VERSION)"
 pact broker publish "$ROOT/pacts" \
   --broker-base-url "$PACT_BROKER_BASE_URL" \

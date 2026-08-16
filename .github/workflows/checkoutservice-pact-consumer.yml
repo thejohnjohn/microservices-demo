@@ -1,0 +1,56 @@
+name: checkoutservice pact (consumer)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "src/checkoutservice/**"
+      - "protos/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-test-and-publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Install pact CLI + protobuf plugin
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh
+          export PATH="$HOME/.pact/bin:$PATH"
+          pact plugin install protobuf
+
+      - name: Consumer test (generates pact file)
+        working-directory: src/checkoutservice
+        run: |
+          export PATH="$HOME/.pact/bin:$PATH"
+          go test -vet=off -tags consumer -run TestCheckoutGetCart -v
+
+      - name: Publish pact to broker
+        env:
+          PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+        run: |
+          export PATH="$HOME/.pact/bin:$PATH"
+          pact broker publish pacts \
+            --broker-base-url "$PACT_BROKER_BASE_URL" \
+            --consumer-app-version "${GITHUB_SHA::8}-${GITHUB_REF_NAME}" \
+            --tag "$GITHUB_REF_NAME" \
+            --branch "$GITHUB_REF_NAME"
+
+      - name: can-i-deploy gate
+        env:
+          PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+        run: |
+          export PATH="$HOME/.pact/bin:$PATH"
+          pact broker can-i-deploy \
+            --broker-base-url "$PACT_BROKER_BASE_URL" \
+            --pacticipant checkoutservice \
+            --version "${GITHUB_SHA::8}-${GITHUB_REF_NAME}" \
+            --to-environment test

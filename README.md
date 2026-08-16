@@ -144,6 +144,8 @@ This fork demonstrates a Consumer-Driven Contract Testing (CDC) lab over the Onl
 microservices, using [Pact](https://pact.io) and the [protobuf plugin](https://github.com/pactflow/pact-protobuf-plugin).
 
 The current scope is the `checkoutservice → cartservice` integration (`CartService/GetCart`).
+The application runs on **minikube** (deployed with skaffold) and the Pact Broker is deployed
+in the same cluster — the whole flow lives on the lab machine.
 
 ### Flow
 
@@ -157,44 +159,75 @@ The current scope is the `checkoutservice → cartservice` integration (`CartSer
    ```
 
 2. **Publish** the pact to the Pact Broker.
-3. **Provider verification** — the real `cartservice` (Docker) is verified against the contract
-   fetched from the broker; the result is published back.
+3. **Provider verification** — the real `cartservice` running on minikube is verified against the
+   contract fetched from the broker. Provider state is set up by the `cartservice` itself through
+   its real `ICartStore` (endpoint `POST /pact-state`). The result is published back to the broker.
 4. **can-i-deploy** — the deployment gate, checked before releasing `checkoutservice`.
 
 ### Tooling
 
-- Pact Broker (Docker): `docker compose -f docker-compose.pact-broker.yml up -d` → http://localhost:9292
-- `pact` CLI (Rust): install via `curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh`
-- Protobuf plugin: managed by the `pact` CLI / plugin driver.
+- **Cluster**: [minikube](https://minikube.sigs.k8s.io/docs/) + [skaffold](https://skaffold.dev/)
+  (see `skaffold.yaml`).
+- **Pact Broker**: Helm chart (`pact-broker/pact-broker`) + PostgreSQL deployed in the
+  `pact-broker` namespace. Reachable locally via port-forward on http://localhost:9292.
+- **`pact` CLI (Rust)**: install via `curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh`
+- **Protobuf plugin**: managed by the `pact` CLI / plugin driver.
+- **Helm**: binary under `~/.local/bin` (installed without sudo).
+
+### Provider state (real)
+
+`src/cartservice/src/services/PactState.cs` maps `POST /pact-state` (HTTP port 8080) to the
+real `ICartStore.AddItemAsync`, so the verifier creates the cart through the provider's own
+data access layer. This is the production pattern: the provider owns its state setup, and
+the state endpoint lives on a separate management port from the gRPC API (7070).
 
 ### Scripts (`pact/`)
 
-| Script                  | Purpose                                                        |
-|-------------------------|----------------------------------------------------------------|
-| `publish.sh`            | Publish `pacts/` to the broker (version = `<sha>-<branch>`)     |
-| `verify-cartservice.sh` | Start `cartservice`+Redis, run provider verification, publish   |
-| `can-i-deploy.sh`       | Check `checkoutservice` can deploy to the `test` environment   |
-| `state-server.py`       | Provider state setup: seeds the cart via the real `AddItem` RPC |
+| Script                      | Purpose                                                              |
+|-----------------------------|----------------------------------------------------------------------|
+| `port-forward-broker.sh`    | Ensure the cluster broker is reachable on localhost:9292              |
+| `publish.sh`                | Publish `pacts/` to the broker (version = `<sha>-<branch>`)           |
+| `verify-cartservice-minikube.sh` | Verify the cluster `cartservice` against the broker contract, publish |
+| `can-i-deploy.sh`           | Check `checkoutservice` can deploy to the `test` environment         |
 
 ### End-to-end run
 
 ```sh
-# 1. Broker
-docker compose -f docker-compose.pact-broker.yml up -d
+# 0. Cluster (one time): broker + postgres in the cluster
+helm repo add pact-broker https://pactfoundation.github.io/pact-broker-chart/
+kubectl apply -f k8s/pact-broker-postgres.yaml
+helm install pact-broker pact-broker/pact-broker --namespace pact-broker \
+  --set database.host=postgres --set database.port=5432 \
+  --set database.adapter=postgres --set database.databaseName=pact_broker \
+  --set database.auth.username=pact_broker --set database.auth.password=pact_broker \
+  --set baseUrl=http://localhost:9292
 
-# 2. Consumer test + publish
+# 1. Consumer test + publish
 cd src/checkoutservice && go test -vet=off -tags consumer -run TestCheckoutGetCart
 cd ../.. && ./pact/publish.sh
 
-# 3. Provider verification
-./pact/verify-cartservice.sh
+# 2. Provider verification (cartservice on minikube, state via /pact-state)
+./pact/verify-cartservice-minikube.sh
 
-# 4. Record cartservice deployment in test, then gate
+# 3. Record cartservice deployment in test, then gate
 pact broker record-deployment --pacticipant cartservice \
   --version $(git rev-parse --short HEAD)-$(git branch --show-current) \
   --environment test
 ./pact/can-i-deploy.sh   # exit 0 = deployable
 ```
+
+### CI/CD (GitHub Actions)
+
+| Workflow | Papel |
+|----------|-------|
+| `.github/workflows/checkoutservice-pact-consumer.yml` | Consumer test (Go) + publish do pact + gate `can-i-deploy` |
+| `.github/workflows/cartservice-pact-provider.yml` | Build/start do `cartservice` real + verificação contra o broker + publish do resultado |
+
+Requer o secret `PACT_BROKER_BASE_URL` apontando para o broker (ex.: `https://broker.example.com`).
+
+O webhook do broker → CI do provider pode ser criado com `pact/create-webhook.sh`
+(usa `repository_dispatch`; exige `GH_TOKEN`). Enquanto o broker for local, use o gatilho
+`workflow_dispatch` ou `push` dos workflows.
 
 ## Demos featuring Online Boutique
 

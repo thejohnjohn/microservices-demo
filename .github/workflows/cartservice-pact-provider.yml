@@ -1,0 +1,60 @@
+name: cartservice pact (provider verification)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "src/cartservice/**"
+      - "protos/**"
+  repository_dispatch:
+    types: [pact-contract-changed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-verification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pact CLI + protobuf plugin
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh
+          export PATH="$HOME/.pact/bin:$PATH"
+          pact plugin install protobuf
+
+      - name: Build cartservice image
+        working-directory: src/cartservice/src
+        run: docker build -t cartservice:verify .
+
+      - name: Start redis + cartservice (real provider)
+        run: |
+          docker run -d --name cartservice-redis --network host redis:7-alpine
+          docker run -d --name cartservice-verify --network host \
+            -e REDIS_ADDR=localhost:6379 \
+            -e ASPNETCORE_ENVIRONMENT=Production \
+            cartservice:verify
+          for i in $(seq 1 30); do
+            if echo > /dev/tcp/localhost/7070 2>/dev/null; then break; fi
+            sleep 2
+          done
+
+      - name: Provider verification
+        env:
+          PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+        run: |
+          export PATH="$HOME/.pact/bin:$PATH"
+          pact verifier \
+            --broker-url "$PACT_BROKER_BASE_URL" \
+            --provider-name cartservice \
+            --transport grpc \
+            --hostname localhost \
+            --port 7070 \
+            --state-change-url http://localhost:8080/pact-state \
+            --publish \
+            --provider-version "${GITHUB_SHA::8}-${GITHUB_REF_NAME}" \
+            --provider-tags "$GITHUB_REF_NAME" \
+            --consumer-version-selectors '{"mainBranch": true}' \
+            --enable-pending
