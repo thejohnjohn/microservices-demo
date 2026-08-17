@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+env:
+  PACT_GO_LIB_DOWNLOAD_PATH: /tmp/pact-lib
+  LD_LIBRARY_PATH: /tmp/pact-lib
+  CGO_LDFLAGS: -L/tmp/pact-lib
+
 jobs:
   consumer-test-and-publish:
     runs-on: ubuntu-24.04
@@ -21,21 +26,19 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Install pact CLI + protobuf plugin
+      - name: Install pact CLI + protobuf plugin + pact-go FFI lib
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf https://d.pactflow.io/pact/install.sh | sh
           export PATH="$HOME/.pact/bin:$PATH"
           pact plugin install protobuf
+          mkdir -p /tmp/pact-lib
+          go install github.com/pact-foundation/pact-go/v2@latest
+          PACT_GO_LIB_DOWNLOAD_PATH=/tmp/pact-lib "$HOME/go/bin/pact-go" install
 
       - name: Consumer test (generates pact file)
         working-directory: src/checkoutservice
-        env:
-          PACT_GO_LIB_DOWNLOAD_PATH: ${{ runner.temp }}/pact-lib
         run: |
           export PATH="$HOME/.pact/bin:$PATH"
-          mkdir -p "$PACT_GO_LIB_DOWNLOAD_PATH"
-          export LD_LIBRARY_PATH="$PACT_GO_LIB_DOWNLOAD_PATH:$LD_LIBRARY_PATH"
-          export CGO_LDFLAGS="-L$PACT_GO_LIB_DOWNLOAD_PATH"
           go test -vet=off -tags consumer -run TestCheckoutGetCart -v
 
       - name: Publish pact to broker
