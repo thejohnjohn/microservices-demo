@@ -29,8 +29,13 @@ jobs:
 
       - name: Consumer test (generates pact file)
         working-directory: src/checkoutservice
+        env:
+          PACT_GO_LIB_DOWNLOAD_PATH: ${{ runner.temp }}/pact-lib
         run: |
           export PATH="$HOME/.pact/bin:$PATH"
+          mkdir -p "$PACT_GO_LIB_DOWNLOAD_PATH"
+          export LD_LIBRARY_PATH="$PACT_GO_LIB_DOWNLOAD_PATH:$LD_LIBRARY_PATH"
+          export CGO_LDFLAGS="-L$PACT_GO_LIB_DOWNLOAD_PATH"
           go test -vet=off -tags consumer -run TestCheckoutGetCart -v
 
       - name: Publish pact to broker
