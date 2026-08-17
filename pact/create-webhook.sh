@@ -30,8 +30,7 @@ pact broker create-webhook \
   --description "Trigger cartservice provider verification (GitHub Actions)" \
   --request POST \
   "https://api.github.com/repos/${GITHUB_REPO}/dispatches" \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${GH_TOKEN}" \
+  -H "Content-Type: application/json; Authorization: Bearer ${GH_TOKEN}" \
   -d '{"event_type":"'"${EVENT_TYPE}"'","client_payload":{"pact_url":"{pactbroker.pactUrl}","consumer_version":"{pactbroker.consumerVersionNumber}"}}'
 
 echo
